@@ -15,7 +15,7 @@ Thanks for your interest in contributing!
    Or manually:
 
    ```bash
-   pip install -e ".[dev]"
+   uv sync --extra dev
    ```
 
 2. Run tests:
