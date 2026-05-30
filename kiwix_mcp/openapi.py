@@ -5,6 +5,7 @@ from typing import Any
 
 SPEC: dict[str, Any] = {
     "openapi": "3.1.0",
+    "servers": [{"url": "/", "description": "Kiwix MCP server"}],
     "info": {
         "title": "Kiwix MCP REST API",
         "version": "1.5.0",

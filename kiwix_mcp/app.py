@@ -187,12 +187,19 @@ def build_app(
         # UIs
         Route("/docs", swagger_ui, methods=["GET"]),
         Route("/redoc", redoc_ui, methods=["GET"]),
+        Route("/mcp/docs", swagger_ui, methods=["GET"]),
+        Route("/mcp/redoc", redoc_ui, methods=["GET"]),
         # Health
         Route("/health", health, methods=["GET"]),
-        # REST API
+        Route("/mcp/health", health, methods=["GET"]),
+        # REST API — served at both /api/... and /mcp/api/... so clients that
+        # treat the MCP mount point (/mcp) as the base URL work out of the box.
         Route("/api/books", api_books, methods=["GET"]),
         Route("/api/search", api_search, methods=["GET"]),
         Route("/api/article", api_article, methods=["GET"]),
+        Route("/mcp/api/books", api_books, methods=["GET"]),
+        Route("/mcp/api/search", api_search, methods=["GET"]),
+        Route("/mcp/api/article", api_article, methods=["GET"]),
     ]
 
     # MCP transport mounts — after exact routes
