@@ -4,12 +4,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
+from typing import Callable
+
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from kiwix_client import KiwixClient, strip_html
 from kiwix_mcp.openapi import SPEC
@@ -79,6 +82,45 @@ def _book_dict(b: Any) -> dict:
         "article_count": b.article_count,
         "updated_at": _serialize_dt(b.updated_at),
     }
+
+
+# ---------------------------------------------------------------------------
+# Path-rewriting middleware
+# ---------------------------------------------------------------------------
+
+# Canonical REST paths as declared in the OpenAPI spec.
+_REST_PATHS = frozenset({
+    "/openapi.json", "/docs", "/redoc",
+    "/health", "/config",
+    "/books", "/search", "/article",
+    "/api/books", "/api/search", "/api/article", "/api/config",
+})
+
+
+class _MCPPrefixMiddleware:
+    """Rewrite /mcp/<REST_PATH> → /<REST_PATH> before Starlette routing.
+
+    Open WebUI (and similar clients) use the MCP mount point (/mcp) as their
+    base URL and prepend it to every path from the OpenAPI spec, sending
+    requests to /mcp/books, /mcp/search, etc.  This middleware strips the
+    /mcp prefix for known REST paths so the root Starlette router can handle
+    them without relying on nested sub-app routing.
+
+    Paths not in _REST_PATHS (e.g. /mcp itself, /mcp/sessions/…) are passed
+    through unchanged so the MCP transport mount handles them normally.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path: str = scope["path"]
+            if path.startswith("/mcp/"):
+                stripped = path[4:]  # "/mcp/books" → "/books"
+                if stripped.rstrip("/") in _REST_PATHS or stripped in _REST_PATHS:
+                    scope = {**scope, "path": stripped}
+        await self._app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -186,18 +228,17 @@ def build_app(
         return JSONResponse({"url": url, "content": strip_html(html)})
 
     # -- routing --------------------------------------------------------------
-    # Primary REST paths match what the OpenAPI spec declares (/books, /search,
-    # /article). Legacy /api/* aliases are kept for backward compatibility.
-    # Both sets are served at the root level AND inside the /mcp sub-app so
-    # clients that use /mcp as their base URL (e.g. Open WebUI) work correctly.
+    # Single-level routes at the root.  _MCPPrefixMiddleware (applied below)
+    # rewrites /mcp/<REST_PATH> → /<REST_PATH> before routing, so Open WebUI
+    # clients that prefix everything with /mcp are handled transparently.
 
-    rest_routes = [
+    routes: list = [
         Route("/openapi.json", openapi_json, methods=["GET"]),
         Route("/docs", swagger_ui, methods=["GET"]),
         Route("/redoc", redoc_ui, methods=["GET"]),
         Route("/health", health, methods=["GET"]),
         Route("/config", config, methods=["GET"]),
-        # Primary paths (matches spec)
+        # Primary paths (spec-canonical)
         Route("/books", api_books, methods=["GET"]),
         Route("/search", api_search, methods=["GET"]),
         Route("/article", api_article, methods=["GET"]),
@@ -208,23 +249,15 @@ def build_app(
         Route("/api/config", config, methods=["GET"]),
     ]
 
-    routes: list = list(rest_routes)
-
     if transport == "streamable-http":
-        # Sub-app at /mcp: REST routes matched first, then MCP transport.
-        mcp_sub_app = Starlette(routes=[
-            *rest_routes,
-            Mount("/", app=mcp.streamable_http_app()),
-        ])
-        routes.append(Mount("/mcp", app=mcp_sub_app))
+        routes.append(Mount("/mcp", app=mcp.streamable_http_app()))
     elif transport == "sse":
-        mcp_sub_app = Starlette(routes=[
-            *rest_routes,
-            Mount("/", app=mcp.sse_app()),
-        ])
-        routes.append(Mount("/sse", app=mcp_sub_app))
+        routes.append(Mount("/sse", app=mcp.sse_app()))
 
-    app = Starlette(routes=routes)
+    starlette_app = Starlette(routes=routes)
+
+    # Apply path-rewriting middleware so /mcp/* REST calls are rerouted.
+    app: ASGIApp = _MCPPrefixMiddleware(starlette_app)
 
     origins = [o.strip() for o in cors_origins.split(",")]
     return CORSMiddleware(
