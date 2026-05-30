@@ -1,9 +1,8 @@
-"""Tests for the OpenAPI REST API endpoints and spec."""
+"""Tests for the OpenAPI tool server endpoints."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
 from starlette.testclient import TestClient
 
 from kiwix_client.parse import Book, SearchResponse, SearchResult
@@ -39,40 +38,40 @@ def _make_client(
 _SAMPLE_BOOKS = [
     Book(
         id="id1",
-        slug="devdocs_en_rust_2025-10",
-        title="Rust (2025-10)",
-        name="devdocs_en_rust",
-        summary="Rust docs",
+        slug="devdocs_en_npm_2025-10",
+        title="npm (2025-10)",
+        name="devdocs_en_npm",
+        summary="npm docs",
         language="eng",
         category="devdocs",
-        article_count=4200,
+        article_count=300,
         updated_at=datetime(2025, 10, 1, tzinfo=timezone.utc),
     ),
     Book(
         id="id2",
-        slug="wikipedia_en_top_2025-01",
-        title="Wikipedia Top",
-        name="wikipedia_en_top",
+        slug="devdocs_en_rust_2025-10",
+        title="Rust (2025-10)",
+        name="devdocs_en_rust",
         summary="",
         language="eng",
-        category="wikipedia",
-        article_count=50000,
+        category="devdocs",
+        article_count=4200,
         updated_at=None,
     ),
 ]
 
 _SAMPLE_SEARCH = SearchResponse(
-    query="vector",
-    total=42,
+    query="organization",
+    total=5,
     start_index=0,
     page_length=25,
     results=[
         SearchResult(
-            title="Vec",
-            book="devdocs_en_rust_2025-10",
-            url="/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html",
-            snippet="A growable list type.",
-            word_count=2100,
+            title="npm-org",
+            book="devdocs_en_npm_2025-10",
+            url="/devdocs_en_npm_2025-10/A/cli/npm-org.html",
+            snippet="Manage orgs.",
+            word_count=120,
         )
     ],
 )
@@ -83,170 +82,146 @@ _SAMPLE_SEARCH = SearchResponse(
 # ---------------------------------------------------------------------------
 
 class TestOpenAPISpec:
-    def test_spec_version(self):
+    def test_version(self):
         assert SPEC["openapi"] == "3.1.0"
 
-    def test_required_paths_present(self):
+    def test_tool_paths_present(self):
         paths = SPEC["paths"]
-        assert "/books" in paths
-        assert "/search" in paths
-        assert "/article" in paths
+        assert "/kiwix_list_books" in paths
+        assert "/kiwix_search" in paths
+        assert "/kiwix_fetch_article" in paths
         assert "/health" in paths
-        assert "/config" in paths
 
-    def test_all_operations_have_operationid(self):
-        for path, methods in SPEC["paths"].items():
-            for method, op in methods.items():
-                assert "operationId" in op, f"Missing operationId on {method.upper()} {path}"
+    def test_tools_use_post(self):
+        for path in ("/kiwix_list_books", "/kiwix_search", "/kiwix_fetch_article"):
+            assert "post" in SPEC["paths"][path], f"{path} must be POST"
 
-    def test_components_schemas_defined(self):
+    def test_operationids_match_tool_names(self):
+        assert SPEC["paths"]["/kiwix_list_books"]["post"]["operationId"] == "kiwix_list_books"
+        assert SPEC["paths"]["/kiwix_search"]["post"]["operationId"] == "kiwix_search"
+        assert SPEC["paths"]["/kiwix_fetch_article"]["post"]["operationId"] == "kiwix_fetch_article"
+
+    def test_input_schemas_defined(self):
         schemas = SPEC["components"]["schemas"]
-        for name in ("Book", "BooksResponse", "SearchResult", "SearchResponse",
-                     "ArticleResponse", "HealthResponse", "ConfigResponse", "ErrorResponse"):
+        for name in ("ListBooksInput", "SearchInput", "FetchArticleInput"):
             assert name in schemas, f"Schema {name!r} missing"
 
-    def test_search_result_url_described_as_relative(self):
-        url_desc = SPEC["components"]["schemas"]["SearchResult"]["properties"]["url"]["description"]
-        assert "article" in url_desc.lower() or "fetch" in url_desc.lower()
+    def test_search_input_requires_query(self):
+        required = SPEC["components"]["schemas"]["SearchInput"].get("required", [])
+        assert "query" in required
+
+    def test_fetch_input_requires_url(self):
+        required = SPEC["components"]["schemas"]["FetchArticleInput"].get("required", [])
+        assert "url" in required
 
 
 # ---------------------------------------------------------------------------
-# /openapi.json endpoint
+# /openapi.json
 # ---------------------------------------------------------------------------
 
 class TestOpenAPIEndpoint:
-    def test_openapi_json_returns_200(self):
-        c = _make_client()
-        resp = c.get("/openapi.json")
-        assert resp.status_code == 200
+    def test_returns_200(self):
+        assert _make_client().get("/openapi.json").status_code == 200
 
-    def test_openapi_json_content_type(self):
-        c = _make_client()
-        resp = c.get("/openapi.json")
+    def test_content_type_json(self):
+        resp = _make_client().get("/openapi.json")
         assert "application/json" in resp.headers["content-type"]
 
-    def test_mcp_openapi_json_alias(self):
-        """Both /openapi.json and /mcp/openapi.json must return the same spec."""
+    def test_mcp_prefix_alias(self):
         c = _make_client()
-        resp1 = c.get("/openapi.json")
-        resp2 = c.get("/mcp/openapi.json")
-        assert resp1.json() == resp2.json()
+        assert c.get("/openapi.json").json() == c.get("/mcp/openapi.json").json()
 
-    def test_spec_contains_openapi_version(self):
-        c = _make_client()
-        data = c.get("/openapi.json").json()
-        assert data["openapi"] == "3.1.0"
+    def test_spec_version_in_response(self):
+        assert _make_client().get("/openapi.json").json()["openapi"] == "3.1.0"
 
 
 # ---------------------------------------------------------------------------
-# /docs and /redoc
+# GET /docs  /redoc  /health
 # ---------------------------------------------------------------------------
 
-class TestUIEndpoints:
-    def test_docs_returns_html(self):
-        c = _make_client()
-        resp = c.get("/docs")
+class TestMeta:
+    def test_docs_returns_swagger(self):
+        resp = _make_client().get("/docs")
         assert resp.status_code == 200
         assert "swagger-ui" in resp.text.lower()
 
     def test_redoc_returns_html(self):
-        c = _make_client()
-        resp = c.get("/redoc")
+        resp = _make_client().get("/redoc")
         assert resp.status_code == 200
         assert "redoc" in resp.text.lower()
 
-
-# ---------------------------------------------------------------------------
-# /health and /config
-# ---------------------------------------------------------------------------
-
-class TestMeta:
-    def test_health_returns_ok(self):
-        c = _make_client()
-        assert c.get("/health").json() == {"status": "ok"}
-
-    def test_config_returns_server_info(self):
-        c = _make_client()
-        data = c.get("/config").json()
-        assert data["name"] == "kiwix-mcp"
-        assert "version" in data
-        assert "capabilities" in data
-
-    def test_api_config_alias(self):
-        c = _make_client()
-        assert c.get("/api/config").status_code == 200
+    def test_health(self):
+        assert _make_client().get("/health").json() == {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# GET /books  (primary path matching the spec)
+# POST /kiwix_list_books
 # ---------------------------------------------------------------------------
 
-class TestBooks:
-    def test_empty_books(self):
-        c = _make_client(books=[])
-        resp = c.get("/books")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 0
-        assert data["books"] == []
-
-    def test_books_returned(self):
+class TestToolListBooks:
+    def test_empty_body_returns_all_books(self):
         c = _make_client(books=_SAMPLE_BOOKS)
-        data = c.get("/books").json()
-        assert data["count"] == 2
-        slugs = [b["slug"] for b in data["books"]]
-        assert "devdocs_en_rust_2025-10" in slugs
+        resp = c.post("/kiwix_list_books", json={})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
 
-    def test_book_fields_present(self):
+    def test_no_body_also_works(self):
+        c = _make_client(books=_SAMPLE_BOOKS)
+        resp = c.post("/kiwix_list_books")
+        assert resp.status_code == 200
+
+    def test_query_filters(self):
+        c = _make_client(books=_SAMPLE_BOOKS)
+        resp = c.post("/kiwix_list_books", json={"query": "npm"})
+        assert resp.status_code == 200
+
+    def test_book_fields(self):
         c = _make_client(books=_SAMPLE_BOOKS[:1])
-        book = c.get("/books").json()["books"][0]
-        assert book["slug"] == "devdocs_en_rust_2025-10"
-        assert book["title"] == "Rust (2025-10)"
-        assert book["article_count"] == 4200
-        assert book["language"] == "eng"
+        book = c.post("/kiwix_list_books", json={}).json()["books"][0]
+        assert book["slug"] == "devdocs_en_npm_2025-10"
+        assert book["title"] == "npm (2025-10)"
+        assert book["article_count"] == 300
         assert book["updated_at"] == "2025-10-01T00:00:00+00:00"
 
     def test_null_updated_at(self):
         c = _make_client(books=[_SAMPLE_BOOKS[1]])
-        assert c.get("/books").json()["books"][0]["updated_at"] is None
+        assert c.post("/kiwix_list_books", json={}).json()["books"][0]["updated_at"] is None
 
-    def test_client_error_returns_502(self):
-        c = _make_client(error=ConnectionError("unreachable"))
-        resp = c.get("/books")
-        assert resp.status_code == 502
-
-    def test_legacy_api_alias(self):
-        c = _make_client(books=_SAMPLE_BOOKS)
-        assert c.get("/api/books").json()["count"] == 2
+    def test_upstream_error_502(self):
+        c = _make_client(error=ConnectionError("down"))
+        assert c.post("/kiwix_list_books", json={}).status_code == 502
 
 
 # ---------------------------------------------------------------------------
-# GET /search
+# POST /kiwix_search
 # ---------------------------------------------------------------------------
 
-class TestSearch:
-    def test_missing_q_returns_400(self):
+class TestToolSearch:
+    def test_missing_query_returns_400(self):
         c = _make_client()
-        resp = c.get("/search")
+        resp = c.post("/kiwix_search", json={})
         assert resp.status_code == 400
-        assert "q is required" in resp.json()["error"]
+        assert "query" in resp.json()["error"]
 
     def test_invalid_start_returns_400(self):
         c = _make_client()
-        resp = c.get("/search?q=test&start=abc")
+        resp = c.post("/kiwix_search", json={"query": "test", "start": "bad"})
         assert resp.status_code == 400
 
     def test_search_returns_results(self):
         c = _make_client(search_response=_SAMPLE_SEARCH)
-        resp = c.get("/search?q=vector&book=devdocs_en_rust_2025-10")
+        resp = c.post("/kiwix_search", json={
+            "query": "organization",
+            "book": "devdocs_en_npm_2025-10",
+        })
         assert resp.status_code == 200
         data = resp.json()
-        assert data["query"] == "vector"
-        assert data["total"] == 42
+        assert data["query"] == "organization"
+        assert data["total"] == 5
         assert len(data["results"]) == 1
         r = data["results"][0]
-        assert r["title"] == "Vec"
-        assert r["word_count"] == 2100
+        assert r["title"] == "npm-org"
+        assert r["url"] == "/devdocs_en_npm_2025-10/A/cli/npm-org.html"
 
     def test_pagination_next_start(self):
         sr = SearchResponse(
@@ -254,71 +229,64 @@ class TestSearch:
             results=[SearchResult(title=f"r{i}", book="b", url=f"/b/A/r{i}") for i in range(25)],
         )
         c = _make_client(search_response=sr)
-        assert c.get("/search?q=q").json()["next_start"] == 25
+        data = c.post("/kiwix_search", json={"query": "q"}).json()
+        assert data["next_start"] == 25
 
-    def test_last_page_next_start_is_null(self):
+    def test_last_page_no_next(self):
         sr = SearchResponse(
-            query="q", total=10, start_index=0, page_length=25,
-            results=[SearchResult(title=f"r{i}", book="b", url=f"/b/A/r{i}") for i in range(10)],
+            query="q", total=3, start_index=0, page_length=25,
+            results=[SearchResult(title=f"r{i}", book="b", url=f"/b/A/r{i}") for i in range(3)],
         )
         c = _make_client(search_response=sr)
-        assert c.get("/search?q=q").json()["next_start"] is None
+        assert c.post("/kiwix_search", json={"query": "q"}).json()["next_start"] is None
 
-    def test_book_scope_error_returns_400(self):
+    def test_book_scope_error_400(self):
         c = _make_client(error=ValueError("search requires a book scope"))
-        assert c.get("/search?q=test").status_code == 400
+        assert c.post("/kiwix_search", json={"query": "test"}).status_code == 400
 
-    def test_upstream_error_returns_502(self):
-        c = _make_client(error=ConnectionError("unreachable"))
-        assert c.get("/search?q=test").status_code == 502
-
-    def test_legacy_api_alias(self):
-        c = _make_client(search_response=_SAMPLE_SEARCH)
-        assert c.get("/api/search?q=vector&book=devdocs_en_rust_2025-10").status_code == 200
+    def test_upstream_error_502(self):
+        c = _make_client(error=ConnectionError("down"))
+        assert c.post("/kiwix_search", json={"query": "test"}).status_code == 502
 
 
 # ---------------------------------------------------------------------------
-# GET /article
+# POST /kiwix_fetch_article
 # ---------------------------------------------------------------------------
 
-class TestArticle:
+class TestToolFetchArticle:
     def test_missing_url_returns_400(self):
         c = _make_client()
-        resp = c.get("/article")
+        resp = c.post("/kiwix_fetch_article", json={})
         assert resp.status_code == 400
-        assert "url is required" in resp.json()["error"]
+        assert "url" in resp.json()["error"]
 
     def test_returns_plain_text(self):
-        html = "<html><body><h1>Vec</h1><p>A growable list &amp; more.</p></body></html>"
+        html = "<html><body><h1>npm-org</h1><p>Manage &amp; create orgs.</p></body></html>"
         c = _make_client(article=html)
-        resp = c.get("/article?url=/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html")
+        resp = c.post("/kiwix_fetch_article", json={"url": "/devdocs_en_npm_2025-10/A/cli/npm-org.html"})
         assert resp.status_code == 200
         data = resp.json()
-        assert "Vec" in data["content"]
-        assert "A growable list & more." in data["content"]
+        assert "npm-org" in data["content"]
+        assert "Manage & create orgs." in data["content"]
         assert "<" not in data["content"]
 
-    def test_url_echoed_in_response(self):
+    def test_url_echoed(self):
         c = _make_client(article="<p>hi</p>")
-        url = "/devdocs_en_rust_2025-10/A/Hi.html"
-        assert c.get(f"/article?url={url}").json()["url"] == url
+        url = "/devdocs_en_npm_2025-10/A/npm-org.html"
+        assert c.post("/kiwix_fetch_article", json={"url": url}).json()["url"] == url
 
-    def test_upstream_error_returns_502(self):
-        c = _make_client(error=ConnectionError("unreachable"))
-        assert c.get("/article?url=/b/A/X.html").status_code == 502
-
-    def test_legacy_api_alias(self):
-        c = _make_client(article="<p>hi</p>")
-        assert c.get("/api/article?url=/b/A/X.html").status_code == 200
+    def test_upstream_error_502(self):
+        c = _make_client(error=ConnectionError("down"))
+        assert c.post("/kiwix_fetch_article", json={"url": "/b/A/X.html"}).status_code == 502
 
 
 # ---------------------------------------------------------------------------
-# /mcp/* — Open WebUI uses /mcp as base URL, so all paths appear prefixed.
-# Tests cover both new primary paths (/mcp/search) and legacy (/mcp/api/search).
+# /mcp/* prefix — Open WebUI uses the server URL (e.g. http://host/mcp) as
+# base for all calls, prepending /mcp to every path from the spec.
 # ---------------------------------------------------------------------------
 
 class TestMCPPrefixedRoutes:
-    """Regression: /mcp/* paths must not be swallowed by the MCP transport mount."""
+    """_MCPPrefixMiddleware must transparently rewrite /mcp/* to /*."""
 
     def test_mcp_openapi_json(self):
         c = _make_client()
@@ -332,40 +300,59 @@ class TestMCPPrefixedRoutes:
     def test_mcp_health(self):
         assert _make_client().get("/mcp/health").json() == {"status": "ok"}
 
-    def test_mcp_config(self):
-        data = _make_client().get("/mcp/config").json()
-        assert data["name"] == "kiwix-mcp"
-
-    def test_mcp_api_config(self):
-        assert _make_client().get("/mcp/api/config").status_code == 200
-
-    # Primary paths (spec-canonical, without /api/)
-    def test_mcp_books(self):
+    # Primary POST tool paths under /mcp/
+    def test_mcp_list_books(self):
         c = _make_client(books=_SAMPLE_BOOKS)
-        assert c.get("/mcp/books").json()["count"] == 2
+        resp = c.post("/mcp/kiwix_list_books", json={})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
 
     def test_mcp_search(self):
         c = _make_client(search_response=_SAMPLE_SEARCH)
-        resp = c.get("/mcp/search?q=vector&book=devdocs_en_rust_2025-10")
+        resp = c.post("/mcp/kiwix_search", json={"query": "organization", "book": "devdocs_en_npm_2025-10"})
         assert resp.status_code == 200
-        assert resp.json()["query"] == "vector"
+        assert resp.json()["query"] == "organization"
 
-    def test_mcp_search_missing_q(self):
-        assert _make_client().get("/mcp/search").status_code == 400
+    def test_mcp_search_missing_query(self):
+        assert _make_client().post("/mcp/kiwix_search", json={}).status_code == 400
 
-    def test_mcp_article(self):
+    def test_mcp_fetch_article(self):
         c = _make_client(article="<p>Hello</p>")
-        assert "Hello" in c.get("/mcp/article?url=/b/A/X.html").json()["content"]
+        resp = c.post("/mcp/kiwix_fetch_article", json={"url": "/b/A/X.html"})
+        assert resp.status_code == 200
+        assert "Hello" in resp.json()["content"]
 
-    # Legacy /api/* aliases under /mcp
-    def test_mcp_api_books(self):
+    # Legacy GET aliases still work under /mcp/
+    def test_mcp_books_get(self):
         c = _make_client(books=_SAMPLE_BOOKS)
-        assert c.get("/mcp/api/books").json()["count"] == 2
+        assert c.get("/mcp/books").json()["count"] == 2
 
-    def test_mcp_api_search(self):
+    def test_mcp_search_get(self):
         c = _make_client(search_response=_SAMPLE_SEARCH)
-        assert c.get("/mcp/api/search?q=vector&book=devdocs_en_rust_2025-10").status_code == 200
+        assert c.get("/mcp/search?q=organization&book=devdocs_en_npm_2025-10").status_code == 200
 
-    def test_mcp_api_article(self):
-        c = _make_client(article="<p>Hello</p>")
-        assert c.get("/mcp/api/article?url=/b/A/X.html").status_code == 200
+    def test_mcp_article_get(self):
+        c = _make_client(article="<p>hi</p>")
+        assert c.get("/mcp/article?url=/b/A/X.html").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Legacy GET aliases (backward compat)
+# ---------------------------------------------------------------------------
+
+class TestLegacyGetAliases:
+    def test_get_books(self):
+        c = _make_client(books=_SAMPLE_BOOKS)
+        assert c.get("/books").json()["count"] == 2
+
+    def test_get_search(self):
+        c = _make_client(search_response=_SAMPLE_SEARCH)
+        assert c.get("/search?q=organization&book=devdocs_en_npm_2025-10").status_code == 200
+
+    def test_get_article(self):
+        c = _make_client(article="<p>hi</p>")
+        assert c.get("/article?url=/b/A/X.html").status_code == 200
+
+    def test_api_prefix_aliases(self):
+        c = _make_client(books=_SAMPLE_BOOKS)
+        assert c.get("/api/books").json()["count"] == 2

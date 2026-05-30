@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.6.0] (2026-05-30)
+
+### Breaking changes
+
+* REST endpoints renamed and switched to POST to match the Open WebUI / mcpo convention:
+  * `POST /kiwix_list_books`   `{ "query": "" }`
+  * `POST /kiwix_search`       `{ "query": "...", "book": "...", "start": 0 }`
+  * `POST /kiwix_fetch_article` `{ "url": "..." }`
+* Legacy `GET /books`, `GET /search`, `GET /article`, `GET /api/*` kept as aliases
+
 ## [1.5.0] (2026-05-30)
 
 ### Features

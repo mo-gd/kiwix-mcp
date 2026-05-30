@@ -1,4 +1,4 @@
-"""OpenAPI 3.1.0 specification for the Kiwix REST API."""
+"""OpenAPI 3.1.0 specification for the Kiwix MCP tool server."""
 from __future__ import annotations
 
 from typing import Any
@@ -7,38 +7,36 @@ SPEC: dict[str, Any] = {
     "openapi": "3.1.0",
     "servers": [{"url": "/", "description": "Kiwix MCP server"}],
     "info": {
-        "title": "Kiwix MCP REST API",
-        "version": "1.5.0",
+        "title": "Kiwix MCP",
+        "version": "1.6.0",
         "description": (
-            "REST API for the Kiwix MCP server. Provides access to ZIM books "
-            "hosted on a Kiwix server: browse the catalog, full-text search, "
+            "OpenAPI tool server for Kiwix ZIM libraries. "
+            "Provides three tools: list available books, full-text search, "
             "and article retrieval as plain text.\n\n"
-            "The MCP transport (Model Context Protocol) is available at `/mcp` "
-            "(streamable-http) or `/sse` (SSE) for AI agent integration."
+            "MCP transport: `/mcp` (streamable-http) · `/sse` (SSE)"
         ),
         "contact": {"url": "https://github.com/mo-gd/kiwix-mcp"},
         "license": {"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
     },
     "paths": {
-        "/books": {
-            "get": {
-                "operationId": "listBooks",
+        "/kiwix_list_books": {
+            "post": {
+                "operationId": "kiwix_list_books",
                 "summary": "List available ZIM books",
                 "description": (
-                    "Returns all ZIM books available on the connected Kiwix server, "
-                    "optionally filtered by a title keyword."
+                    "Returns all ZIM books available on the Kiwix server. "
+                    "Optionally filter by title keyword. "
+                    "Use the returned `slug` values as the `book` parameter in `kiwix_search`."
                 ),
-                "tags": ["books"],
-                "parameters": [
-                    {
-                        "name": "q",
-                        "in": "query",
-                        "required": False,
-                        "description": "Title keyword filter (e.g. `wikipedia`)",
-                        "schema": {"type": "string", "default": ""},
-                        "example": "wikipedia",
-                    }
-                ],
+                "tags": ["kiwix"],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ListBooksInput"}
+                        }
+                    },
+                },
                 "responses": {
                     "200": {
                         "description": "Catalog of available books",
@@ -59,43 +57,25 @@ SPEC: dict[str, Any] = {
                 },
             }
         },
-        "/search": {
-            "get": {
-                "operationId": "search",
+        "/kiwix_search": {
+            "post": {
+                "operationId": "kiwix_search",
                 "summary": "Full-text search across ZIM books",
                 "description": (
                     "Search for articles across all books or within a specific book. "
-                    "On multi-book servers, the `book` parameter is required — "
-                    "call `/books` first to discover available slugs. "
+                    "Call `kiwix_list_books` first to find book slugs. "
+                    "On multi-book servers the `book` parameter is required. "
                     "Results are paginated at 25 per page; use `start` to paginate."
                 ),
-                "tags": ["search"],
-                "parameters": [
-                    {
-                        "name": "q",
-                        "in": "query",
-                        "required": True,
-                        "description": "Search query",
-                        "schema": {"type": "string"},
-                        "example": "vector",
+                "tags": ["kiwix"],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/SearchInput"}
+                        }
                     },
-                    {
-                        "name": "book",
-                        "in": "query",
-                        "required": False,
-                        "description": "Book slug to restrict the search (e.g. `devdocs_en_rust_2025-10`)",
-                        "schema": {"type": "string", "default": ""},
-                        "example": "devdocs_en_rust_2025-10",
-                    },
-                    {
-                        "name": "start",
-                        "in": "query",
-                        "required": False,
-                        "description": "Zero-based result offset for pagination (page size is 25)",
-                        "schema": {"type": "integer", "default": 0, "minimum": 0},
-                        "example": 25,
-                    },
-                ],
+                },
                 "responses": {
                     "200": {
                         "description": "Paginated search results",
@@ -106,7 +86,7 @@ SPEC: dict[str, Any] = {
                         },
                     },
                     "400": {
-                        "description": "Missing required parameter or book scope required on this server",
+                        "description": "Missing required field or book scope required",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/ErrorResponse"}
@@ -124,25 +104,23 @@ SPEC: dict[str, Any] = {
                 },
             }
         },
-        "/article": {
-            "get": {
-                "operationId": "fetchArticle",
+        "/kiwix_fetch_article": {
+            "post": {
+                "operationId": "kiwix_fetch_article",
                 "summary": "Fetch an article as plain text",
                 "description": (
-                    "Retrieve the full content of a Kiwix article, stripped of HTML tags. "
-                    "Use the `url` field returned by `/search`."
+                    "Retrieve the full content of a Kiwix article, stripped of HTML. "
+                    "Use the `url` value from `kiwix_search` results."
                 ),
-                "tags": ["articles"],
-                "parameters": [
-                    {
-                        "name": "url",
-                        "in": "query",
-                        "required": True,
-                        "description": "Relative article URL as returned by `/search`",
-                        "schema": {"type": "string"},
-                        "example": "/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html",
-                    }
-                ],
+                "tags": ["kiwix"],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/FetchArticleInput"}
+                        }
+                    },
+                },
                 "responses": {
                     "200": {
                         "description": "Article content as plain text",
@@ -153,7 +131,7 @@ SPEC: dict[str, Any] = {
                         },
                     },
                     "400": {
-                        "description": "Missing `url` parameter",
+                        "description": "Missing `url` field",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/ErrorResponse"}
@@ -161,7 +139,7 @@ SPEC: dict[str, Any] = {
                         },
                     },
                     "502": {
-                        "description": "Upstream Kiwix server unreachable or article not found",
+                        "description": "Upstream Kiwix server unreachable",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/ErrorResponse"}
@@ -173,9 +151,8 @@ SPEC: dict[str, Any] = {
         },
         "/health": {
             "get": {
-                "operationId": "healthCheck",
-                "summary": "Server health check",
-                "description": "Returns `ok` when the server is running.",
+                "operationId": "health",
+                "summary": "Health check",
                 "tags": ["meta"],
                 "responses": {
                     "200": {
@@ -189,46 +166,69 @@ SPEC: dict[str, Any] = {
                 },
             }
         },
-        "/config": {
-            "get": {
-                "operationId": "getConfig",
-                "summary": "Server configuration and capabilities",
-                "description": "Returns server name, version, and available capabilities.",
-                "tags": ["meta"],
-                "responses": {
-                    "200": {
-                        "description": "Server configuration",
-                        "content": {
-                            "application/json": {
-                                "schema": {"$ref": "#/components/schemas/ConfigResponse"}
-                            }
-                        },
-                    }
-                },
-            }
-        },
     },
     "components": {
         "schemas": {
+            "ListBooksInput": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Optional title keyword filter (e.g. `wikipedia`)",
+                        "example": "npm",
+                    }
+                },
+            },
+            "SearchInput": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                        "example": "how to create an organization",
+                    },
+                    "book": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Book slug from `kiwix_list_books` (required on multi-book servers)",
+                        "example": "devdocs_en_npm_2025-10",
+                    },
+                    "start": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0,
+                        "description": "Zero-based result offset for pagination (page size 25)",
+                    },
+                },
+            },
+            "FetchArticleInput": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Relative article URL from `kiwix_search` results",
+                        "example": "/devdocs_en_npm_2025-10/A/cli/npm-org.html",
+                    }
+                },
+            },
             "Book": {
                 "type": "object",
                 "required": ["slug", "title"],
                 "properties": {
                     "slug": {
                         "type": "string",
-                        "description": "Unique book identifier used as the `book` parameter in search",
-                        "example": "devdocs_en_rust_2025-10",
+                        "description": "Unique identifier — use as `book` in `kiwix_search`",
+                        "example": "devdocs_en_npm_2025-10",
                     },
-                    "title": {"type": "string", "example": "Rust (2025-10)"},
-                    "name": {
-                        "type": "string",
-                        "description": "Book name without date suffix",
-                        "example": "devdocs_en_rust",
-                    },
+                    "title": {"type": "string", "example": "npm (2025-10)"},
+                    "name": {"type": "string", "example": "devdocs_en_npm"},
                     "summary": {"type": ["string", "null"]},
                     "language": {"type": ["string", "null"], "example": "eng"},
                     "category": {"type": ["string", "null"], "example": "devdocs"},
-                    "article_count": {"type": "integer", "example": 4200},
+                    "article_count": {"type": "integer", "example": 300},
                     "updated_at": {
                         "type": ["string", "null"],
                         "format": "date-time",
@@ -240,47 +240,35 @@ SPEC: dict[str, Any] = {
                 "type": "object",
                 "required": ["count", "books"],
                 "properties": {
-                    "count": {"type": "integer", "example": 3},
-                    "books": {
-                        "type": "array",
-                        "items": {"$ref": "#/components/schemas/Book"},
-                    },
+                    "count": {"type": "integer"},
+                    "books": {"type": "array", "items": {"$ref": "#/components/schemas/Book"}},
                 },
             },
             "SearchResult": {
                 "type": "object",
                 "required": ["title", "book", "url"],
                 "properties": {
-                    "title": {"type": "string", "example": "Vec"},
-                    "book": {
-                        "type": "string",
-                        "description": "Slug of the book containing this article",
-                        "example": "devdocs_en_rust_2025-10",
-                    },
+                    "title": {"type": "string"},
+                    "book": {"type": "string"},
                     "url": {
                         "type": "string",
-                        "description": "Relative URL — pass to `/article` to fetch full content",
-                        "example": "/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html",
+                        "description": "Pass to `kiwix_fetch_article`",
                     },
-                    "snippet": {
-                        "type": ["string", "null"],
-                        "description": "Short excerpt from the article",
-                    },
-                    "word_count": {"type": ["integer", "null"], "example": 2100},
+                    "snippet": {"type": ["string", "null"]},
+                    "word_count": {"type": ["integer", "null"]},
                 },
             },
             "SearchResponse": {
                 "type": "object",
                 "required": ["query", "total", "start", "page_length", "results"],
                 "properties": {
-                    "query": {"type": "string", "example": "vector"},
-                    "total": {"type": "integer", "example": 42},
-                    "start": {"type": "integer", "example": 0},
-                    "page_length": {"type": "integer", "example": 25},
+                    "query": {"type": "string"},
+                    "total": {"type": "integer"},
+                    "start": {"type": "integer"},
+                    "page_length": {"type": "integer"},
                     "next_start": {
                         "type": ["integer", "null"],
-                        "description": "Pass as `start` for the next page; `null` when no more results",
-                        "example": 25,
+                        "description": "Use as `start` for next page; null if no more results",
                     },
                     "results": {
                         "type": "array",
@@ -302,36 +290,17 @@ SPEC: dict[str, Any] = {
             "HealthResponse": {
                 "type": "object",
                 "required": ["status"],
-                "properties": {
-                    "status": {"type": "string", "example": "ok"}
-                },
-            },
-            "ConfigResponse": {
-                "type": "object",
-                "required": ["name", "version"],
-                "properties": {
-                    "name": {"type": "string", "example": "kiwix-mcp"},
-                    "version": {"type": "string", "example": "1.5.0"},
-                    "capabilities": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "example": ["books", "search", "article"],
-                    },
-                },
+                "properties": {"status": {"type": "string", "example": "ok"}},
             },
             "ErrorResponse": {
                 "type": "object",
                 "required": ["error"],
-                "properties": {
-                    "error": {"type": "string", "example": "q is required"}
-                },
+                "properties": {"error": {"type": "string"}},
             },
         }
     },
     "tags": [
-        {"name": "books", "description": "ZIM book catalog operations"},
-        {"name": "search", "description": "Full-text article search"},
-        {"name": "articles", "description": "Article content retrieval"},
-        {"name": "meta", "description": "Server metadata and health"},
+        {"name": "kiwix", "description": "Kiwix ZIM library tools"},
+        {"name": "meta", "description": "Server metadata"},
     ],
 }
