@@ -120,6 +120,13 @@ def build_app(
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
+    async def config(request: Request) -> JSONResponse:
+        return JSONResponse({
+            "name": "kiwix-mcp",
+            "version": "1.5.0",
+            "capabilities": ["books", "search", "article"],
+        })
+
     # -- REST endpoints -------------------------------------------------------
 
     async def api_books(request: Request) -> JSONResponse:
@@ -179,34 +186,32 @@ def build_app(
         return JSONResponse({"url": url, "content": strip_html(html)})
 
     # -- routing --------------------------------------------------------------
-    # REST routes shared between the root app and the /mcp sub-app.
-    # The /mcp sub-app handles everything under /mcp: REST endpoints are
-    # matched first (exact Route), then the MCP transport catches the rest.
-    # This avoids ambiguity between Route("/mcp/api/*") and Mount("/mcp").
+    # Primary REST paths match what the OpenAPI spec declares (/books, /search,
+    # /article). Legacy /api/* aliases are kept for backward compatibility.
+    # Both sets are served at the root level AND inside the /mcp sub-app so
+    # clients that use /mcp as their base URL (e.g. Open WebUI) work correctly.
 
     rest_routes = [
         Route("/openapi.json", openapi_json, methods=["GET"]),
         Route("/docs", swagger_ui, methods=["GET"]),
         Route("/redoc", redoc_ui, methods=["GET"]),
         Route("/health", health, methods=["GET"]),
+        Route("/config", config, methods=["GET"]),
+        # Primary paths (matches spec)
+        Route("/books", api_books, methods=["GET"]),
+        Route("/search", api_search, methods=["GET"]),
+        Route("/article", api_article, methods=["GET"]),
+        # Legacy /api/* aliases
         Route("/api/books", api_books, methods=["GET"]),
         Route("/api/search", api_search, methods=["GET"]),
         Route("/api/article", api_article, methods=["GET"]),
+        Route("/api/config", config, methods=["GET"]),
     ]
 
-    # Root-level routes (paths NOT under /mcp).
-    routes: list = [
-        Route("/openapi.json", openapi_json, methods=["GET"]),
-        Route("/docs", swagger_ui, methods=["GET"]),
-        Route("/redoc", redoc_ui, methods=["GET"]),
-        Route("/health", health, methods=["GET"]),
-        Route("/api/books", api_books, methods=["GET"]),
-        Route("/api/search", api_search, methods=["GET"]),
-        Route("/api/article", api_article, methods=["GET"]),
-    ]
+    routes: list = list(rest_routes)
 
     if transport == "streamable-http":
-        # Sub-app mounted at /mcp: REST routes first, then MCP transport.
+        # Sub-app at /mcp: REST routes matched first, then MCP transport.
         mcp_sub_app = Starlette(routes=[
             *rest_routes,
             Mount("/", app=mcp.streamable_http_app()),

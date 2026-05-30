@@ -20,7 +20,7 @@ SPEC: dict[str, Any] = {
         "license": {"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
     },
     "paths": {
-        "/api/books": {
+        "/books": {
             "get": {
                 "operationId": "listBooks",
                 "summary": "List available ZIM books",
@@ -59,14 +59,14 @@ SPEC: dict[str, Any] = {
                 },
             }
         },
-        "/api/search": {
+        "/search": {
             "get": {
                 "operationId": "search",
                 "summary": "Full-text search across ZIM books",
                 "description": (
                     "Search for articles across all books or within a specific book. "
                     "On multi-book servers, the `book` parameter is required — "
-                    "call `/api/books` first to discover available slugs. "
+                    "call `/books` first to discover available slugs. "
                     "Results are paginated at 25 per page; use `start` to paginate."
                 ),
                 "tags": ["search"],
@@ -124,13 +124,13 @@ SPEC: dict[str, Any] = {
                 },
             }
         },
-        "/api/article": {
+        "/article": {
             "get": {
                 "operationId": "fetchArticle",
                 "summary": "Fetch an article as plain text",
                 "description": (
                     "Retrieve the full content of a Kiwix article, stripped of HTML tags. "
-                    "Use the `url` field returned by `/api/search`."
+                    "Use the `url` field returned by `/search`."
                 ),
                 "tags": ["articles"],
                 "parameters": [
@@ -138,7 +138,7 @@ SPEC: dict[str, Any] = {
                         "name": "url",
                         "in": "query",
                         "required": True,
-                        "description": "Relative article URL as returned by `/api/search`",
+                        "description": "Relative article URL as returned by `/search`",
                         "schema": {"type": "string"},
                         "example": "/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html",
                     }
@@ -183,6 +183,24 @@ SPEC: dict[str, Any] = {
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/HealthResponse"}
+                            }
+                        },
+                    }
+                },
+            }
+        },
+        "/config": {
+            "get": {
+                "operationId": "getConfig",
+                "summary": "Server configuration and capabilities",
+                "description": "Returns server name, version, and available capabilities.",
+                "tags": ["meta"],
+                "responses": {
+                    "200": {
+                        "description": "Server configuration",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/ConfigResponse"}
                             }
                         },
                     }
@@ -241,7 +259,7 @@ SPEC: dict[str, Any] = {
                     },
                     "url": {
                         "type": "string",
-                        "description": "Relative URL — pass to `/api/article` to fetch full content",
+                        "description": "Relative URL — pass to `/article` to fetch full content",
                         "example": "/devdocs_en_rust_2025-10/A/std/vec/struct.Vec.html",
                     },
                     "snippet": {
@@ -286,6 +304,19 @@ SPEC: dict[str, Any] = {
                 "required": ["status"],
                 "properties": {
                     "status": {"type": "string", "example": "ok"}
+                },
+            },
+            "ConfigResponse": {
+                "type": "object",
+                "required": ["name", "version"],
+                "properties": {
+                    "name": {"type": "string", "example": "kiwix-mcp"},
+                    "version": {"type": "string", "example": "1.5.0"},
+                    "capabilities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "example": ["books", "search", "article"],
+                    },
                 },
             },
             "ErrorResponse": {
