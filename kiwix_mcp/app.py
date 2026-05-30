@@ -179,34 +179,45 @@ def build_app(
         return JSONResponse({"url": url, "content": strip_html(html)})
 
     # -- routing --------------------------------------------------------------
+    # REST routes shared between the root app and the /mcp sub-app.
+    # The /mcp sub-app handles everything under /mcp: REST endpoints are
+    # matched first (exact Route), then the MCP transport catches the rest.
+    # This avoids ambiguity between Route("/mcp/api/*") and Mount("/mcp").
 
-    routes = [
-        # OpenAPI spec — exact paths first so they are matched before MCP mount
+    rest_routes = [
         Route("/openapi.json", openapi_json, methods=["GET"]),
-        Route("/mcp/openapi.json", openapi_json, methods=["GET"]),
-        # UIs
         Route("/docs", swagger_ui, methods=["GET"]),
         Route("/redoc", redoc_ui, methods=["GET"]),
-        Route("/mcp/docs", swagger_ui, methods=["GET"]),
-        Route("/mcp/redoc", redoc_ui, methods=["GET"]),
-        # Health
         Route("/health", health, methods=["GET"]),
-        Route("/mcp/health", health, methods=["GET"]),
-        # REST API — served at both /api/... and /mcp/api/... so clients that
-        # treat the MCP mount point (/mcp) as the base URL work out of the box.
         Route("/api/books", api_books, methods=["GET"]),
         Route("/api/search", api_search, methods=["GET"]),
         Route("/api/article", api_article, methods=["GET"]),
-        Route("/mcp/api/books", api_books, methods=["GET"]),
-        Route("/mcp/api/search", api_search, methods=["GET"]),
-        Route("/mcp/api/article", api_article, methods=["GET"]),
     ]
 
-    # MCP transport mounts — after exact routes
+    # Root-level routes (paths NOT under /mcp).
+    routes: list = [
+        Route("/openapi.json", openapi_json, methods=["GET"]),
+        Route("/docs", swagger_ui, methods=["GET"]),
+        Route("/redoc", redoc_ui, methods=["GET"]),
+        Route("/health", health, methods=["GET"]),
+        Route("/api/books", api_books, methods=["GET"]),
+        Route("/api/search", api_search, methods=["GET"]),
+        Route("/api/article", api_article, methods=["GET"]),
+    ]
+
     if transport == "streamable-http":
-        routes.append(Mount("/mcp", app=mcp.streamable_http_app()))
+        # Sub-app mounted at /mcp: REST routes first, then MCP transport.
+        mcp_sub_app = Starlette(routes=[
+            *rest_routes,
+            Mount("/", app=mcp.streamable_http_app()),
+        ])
+        routes.append(Mount("/mcp", app=mcp_sub_app))
     elif transport == "sse":
-        routes.append(Mount("/sse", app=mcp.sse_app()))
+        mcp_sub_app = Starlette(routes=[
+            *rest_routes,
+            Mount("/", app=mcp.sse_app()),
+        ])
+        routes.append(Mount("/sse", app=mcp_sub_app))
 
     app = Starlette(routes=routes)
 

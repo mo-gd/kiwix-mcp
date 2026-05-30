@@ -302,3 +302,52 @@ class TestAPIArticle:
         c = _make_client(error=ConnectionError("unreachable"))
         resp = c.get("/api/article?url=/b/A/X.html")
         assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# /mcp/* prefix — Open WebUI and similar clients that use the MCP mount
+# point as their base URL must reach the REST API via /mcp/api/*, /mcp/docs,
+# /mcp/openapi.json, etc.
+# ---------------------------------------------------------------------------
+
+class TestMCPPrefixedRoutes:
+    """Regression: routes under /mcp/api/* must not be swallowed by the MCP mount."""
+
+    def test_mcp_openapi_json(self):
+        c = _make_client()
+        resp = c.get("/mcp/openapi.json")
+        assert resp.status_code == 200
+        assert resp.json()["openapi"] == "3.1.0"
+
+    def test_mcp_docs(self):
+        c = _make_client()
+        assert c.get("/mcp/docs").status_code == 200
+
+    def test_mcp_health(self):
+        c = _make_client()
+        assert c.get("/mcp/health").json() == {"status": "ok"}
+
+    def test_mcp_api_books(self):
+        c = _make_client(books=_SAMPLE_BOOKS)
+        resp = c.get("/mcp/api/books")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
+
+    def test_mcp_api_search(self):
+        c = _make_client(search_response=_SAMPLE_SEARCH)
+        resp = c.get("/mcp/api/search?q=vector&book=devdocs_en_rust_2025-10")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["query"] == "vector"
+        assert len(data["results"]) == 1
+
+    def test_mcp_api_search_missing_q(self):
+        c = _make_client()
+        resp = c.get("/mcp/api/search")
+        assert resp.status_code == 400
+
+    def test_mcp_api_article(self):
+        c = _make_client(article="<p>Hello</p>")
+        resp = c.get("/mcp/api/article?url=/b/A/X.html")
+        assert resp.status_code == 200
+        assert "Hello" in resp.json()["content"]
