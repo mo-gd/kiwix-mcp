@@ -4,26 +4,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Any
-
-from mcp.server.fastmcp import FastMCP
-from starlette.middleware.cors import CORSMiddleware
-
-
-def build_cors_app(mcp: FastMCP, transport: str, cors_origins: str) -> Any:
-    """Wrap an MCP HTTP app with CORS middleware.
-
-    Returns the wrapped ASGI app ready for uvicorn.
-    """
-    app = mcp.streamable_http_app() if transport == "streamable-http" else mcp.sse_app()
-    origins = [o.strip() for o in cors_origins.split(",")]
-    return CORSMiddleware(
-        app,
-        allow_origins=origins,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
-        expose_headers=["Mcp-Session-Id"],
-    )
 
 
 def main() -> None:
@@ -116,7 +96,16 @@ def main() -> None:
     if transport in ("streamable-http", "sse"):
         import uvicorn
 
-        app = build_cors_app(mcp, transport, args.cors_allow_origins)
+        from kiwix_mcp.app import build_app
+
+        base = f"http://{args.host}:{args.port}"
+        print(f"  OpenAPI spec : {base}/openapi.json", file=sys.stderr)
+        print(f"  Swagger UI   : {base}/docs", file=sys.stderr)
+        print(f"  ReDoc        : {base}/redoc", file=sys.stderr)
+        mcp_path = "/mcp" if transport == "streamable-http" else "/sse"
+        print(f"  MCP endpoint : {base}{mcp_path}", file=sys.stderr)
+
+        app = build_app(client, mcp, transport, args.cors_allow_origins)
         uvicorn.run(app, host=args.host, port=args.port)
     else:
         mcp.run(transport=transport)

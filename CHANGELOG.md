@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0] (2026-05-30)
+
+### Features
+
+* **OpenAPI 3.1.0 support** — HTTP transports now expose a full REST API alongside the MCP transport:
+  * `GET /openapi.json` and `GET /mcp/openapi.json` — machine-readable OpenAPI 3.1.0 spec
+  * `GET /docs` — Swagger UI (interactive browser)
+  * `GET /redoc` — ReDoc documentation
+  * `GET /health` — health-check endpoint
+  * `GET /api/books` — list ZIM books (JSON)
+  * `GET /api/search` — full-text search (JSON, paginated)
+  * `GET /api/article` — fetch article as plain text (JSON)
+* Startup log now prints all endpoint URLs when running an HTTP transport
+
 ## [1.4.0](https://github.com/OscillateLabsLLC/kiwix-mcp/compare/v1.3.0...v1.4.0) (2026-04-24)
 
 

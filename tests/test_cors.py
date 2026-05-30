@@ -1,28 +1,23 @@
-"""Tests for CORS support on HTTP transports.
-
-These verify that build_cors_app() — the function we own — correctly wires
-CORS middleware onto MCP's ASGI app.  The original bug was that browser-based
-MCP clients got 405 on OPTIONS preflight; these tests confirm that path works.
-"""
+"""Tests for CORS support on HTTP transports."""
 from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from kiwix_mcp.__main__ import build_cors_app
+from kiwix_mcp.app import build_app
 from kiwix_mcp.server import create_server
 
 from tests.test_mcp import MockKiwixClient
 
 
 def _build(transport: str = "streamable-http", cors_origins: str = "*") -> TestClient:
-    """Run build_cors_app with a mock client and return a TestClient."""
-    mcp = create_server(MockKiwixClient(), host="127.0.0.1", port=8000)
-    app = build_cors_app(mcp, transport, cors_origins)
+    client = MockKiwixClient()
+    mcp = create_server(client, host="127.0.0.1", port=8000)
+    app = build_app(client, mcp, transport, cors_origins)
     return TestClient(app)
 
 
 class TestPreflightNot405:
-    """The original bug: OPTIONS preflight on /mcp returned 405, blocking browsers."""
+    """OPTIONS preflight must succeed so browser-based MCP clients are not blocked."""
 
     def test_streamable_http_options_succeeds(self):
         client = _build(transport="streamable-http")
@@ -42,7 +37,7 @@ class TestPreflightNot405:
 
 
 class TestOriginParsing:
-    """build_cors_app splits comma-separated origins — test that our parsing works."""
+    """Comma-separated CORS origins must be parsed and enforced correctly."""
 
     def test_wildcard_default(self):
         client = _build(cors_origins="*")
@@ -70,13 +65,11 @@ class TestOriginParsing:
 
     def test_comma_separated_origins(self):
         client = _build(cors_origins="http://app1.example.com, http://app2.example.com")
-        # First origin works
         resp = client.options(
             "/mcp",
             headers={"Origin": "http://app1.example.com", "Access-Control-Request-Method": "POST"},
         )
         assert resp.headers["access-control-allow-origin"] == "http://app1.example.com"
-        # Second origin works (with whitespace trimmed)
         resp = client.options(
             "/mcp",
             headers={"Origin": "http://app2.example.com", "Access-Control-Request-Method": "POST"},
@@ -84,7 +77,6 @@ class TestOriginParsing:
         assert resp.headers["access-control-allow-origin"] == "http://app2.example.com"
 
     def test_env_var_style_no_spaces(self):
-        """CORS_ALLOW_ORIGINS="http://a,http://b" (no spaces) must also work."""
         client = _build(cors_origins="http://a.example.com,http://b.example.com")
         resp = client.options(
             "/mcp",
