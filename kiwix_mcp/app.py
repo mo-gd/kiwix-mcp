@@ -1,7 +1,6 @@
 """ASGI application: OpenAPI tool server + Swagger/ReDoc + MCP transport."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -62,49 +61,6 @@ _REDOC_HTML = """\
 
 
 # ---------------------------------------------------------------------------
-# Serialisation helpers
-# ---------------------------------------------------------------------------
-
-def _serialize_dt(dt: Optional[datetime]) -> Optional[str]:
-    return dt.isoformat() if dt is not None else None
-
-
-def _book_dict(b: Any) -> dict:
-    return {
-        "slug": b.slug,
-        "title": b.title,
-        "name": b.name,
-        "summary": b.summary or None,
-        "language": b.language or None,
-        "category": b.category or None,
-        "article_count": b.article_count,
-        "updated_at": _serialize_dt(b.updated_at),
-    }
-
-
-def _search_response_dict(sr: Any) -> dict:
-    delivered = sr.start_index + len(sr.results)
-    has_more = delivered < sr.total
-    return {
-        "query": sr.query,
-        "total": sr.total,
-        "start": sr.start_index,
-        "page_length": sr.page_length,
-        "next_start": (sr.start_index + sr.page_length) if has_more else None,
-        "results": [
-            {
-                "title": r.title,
-                "book": r.book,
-                "url": r.url,
-                "snippet": r.snippet or None,
-                "word_count": r.word_count or None,
-            }
-            for r in sr.results
-        ],
-    }
-
-
-# ---------------------------------------------------------------------------
 # Path-rewriting middleware
 # ---------------------------------------------------------------------------
 
@@ -112,11 +68,7 @@ def _search_response_dict(sr: Any) -> dict:
 # rewrite for clients that treat /mcp as their base URL (e.g. Open WebUI).
 _REST_PATHS = frozenset({
     "/openapi.json", "/docs", "/redoc", "/health",
-    # Primary tool endpoints (POST, mcpo-style naming)
-    "/kiwix_list_books", "/kiwix_search", "/kiwix_fetch_article",
-    # Legacy GET aliases kept for backward compatibility
-    "/books", "/search", "/article",
-    "/api/books", "/api/search", "/api/article",
+    "/kiwix_search", "/kiwix_fetch_article",
 })
 
 
@@ -125,7 +77,7 @@ class _MCPPrefixMiddleware:
 
     Open WebUI uses the configured server URL as the base for all calls.
     When the user sets the server URL to http://host/mcp, Open WebUI calls
-    /mcp/kiwix_search, /mcp/kiwix_list_books, etc.  This middleware strips
+    /mcp/kiwix_search, /mcp/kiwix_fetch_article, etc.  This middleware strips
     /mcp for known REST paths so the root router can handle them directly.
     Paths not in _REST_PATHS (e.g. /mcp itself for the MCP transport) are
     passed through unchanged.
@@ -145,6 +97,23 @@ class _MCPPrefixMiddleware:
 
 
 # ---------------------------------------------------------------------------
+# Viewer URL helper
+# ---------------------------------------------------------------------------
+
+def _viewer_url(origin: str, article_url: str) -> Optional[str]:
+    """Convert /book/A/path.html → {origin}/viewer#book/path (for human browsers)."""
+    if not origin:
+        return None
+    path = article_url.lstrip("/")
+    if "/A/" not in path:
+        return None
+    book, rest = path.split("/A/", 1)
+    if rest.endswith(".html"):
+        rest = rest[:-5]
+    return f"{origin}/viewer#{book}/{rest}"
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -157,8 +126,7 @@ def build_app(
     """Return a fully configured ASGI app.
 
     Primary endpoints (POST, mcpo-style — what Open WebUI expects):
-      POST /kiwix_list_books    — list ZIM books
-      POST /kiwix_search        — full-text search
+      POST /kiwix_search        — full-text search across all books
       POST /kiwix_fetch_article — fetch article as plain text
 
     Discovery / docs:
@@ -167,16 +135,14 @@ def build_app(
       GET  /redoc               — ReDoc
       GET  /health              — health check
 
-    Legacy GET aliases (backward compat):
-      GET  /books  /search  /article
-      GET  /api/books  /api/search  /api/article
-
     All paths also reachable with /mcp/ prefix (Open WebUI base-URL behaviour).
 
     MCP transport:
       *  /mcp   — streamable-http (if selected)
       *  /sse   — SSE (if selected)
     """
+
+    viewer_origin: str = getattr(client, "viewer_base_url", "")
 
     # -- meta -----------------------------------------------------------------
 
@@ -194,18 +160,6 @@ def build_app(
 
     # -- POST tool endpoints (primary, mcpo-style) ----------------------------
 
-    async def tool_list_books(request: Request) -> JSONResponse:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        q = body.get("query", "") if isinstance(body, dict) else ""
-        try:
-            books = client.list_books(q=q)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-        return JSONResponse({"count": len(books), "books": [_book_dict(b) for b in books]})
-
     async def tool_search(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -218,20 +172,43 @@ def build_app(
         if not q:
             return JSONResponse({"error": "query is required"}, status_code=400)
 
-        book = body.get("book", "")
+        # Search all books and aggregate results.
         try:
-            start = int(body.get("start", 0))
-        except (TypeError, ValueError):
-            return JSONResponse({"error": "start must be an integer"}, status_code=400)
+            books = client.list_books()
+        except Exception:
+            books = []
 
-        try:
-            sr = client.search(pattern=q, books=book, start=start)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
+        all_results: list = []
 
-        return JSONResponse(_search_response_dict(sr))
+        if books:
+            for book in books:
+                try:
+                    sr = client.search(pattern=q, books=book.slug, start=0)
+                    all_results.extend(sr.results[:10])
+                except Exception:
+                    continue
+        else:
+            try:
+                sr = client.search(pattern=q, books="", start=0)
+                all_results.extend(sr.results)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"error": str(exc)}, status_code=502)
+
+        return JSONResponse({
+            "query": q,
+            "total": len(all_results),
+            "results": [
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "viewer_url": _viewer_url(viewer_origin, r.url),
+                    "snippet": r.snippet or None,
+                }
+                for r in all_results
+            ],
+        })
 
     async def tool_fetch_article(request: Request) -> JSONResponse:
         try:
@@ -250,43 +227,6 @@ def build_app(
             return JSONResponse({"error": str(exc)}, status_code=502)
         return JSONResponse({"url": url, "content": strip_html(html)})
 
-    # -- Legacy GET endpoints (backward compat) --------------------------------
-
-    async def get_books(request: Request) -> JSONResponse:
-        q = request.query_params.get("q", "")
-        try:
-            books = client.list_books(q=q)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-        return JSONResponse({"count": len(books), "books": [_book_dict(b) for b in books]})
-
-    async def get_search(request: Request) -> JSONResponse:
-        q = request.query_params.get("q", "")
-        if not q:
-            return JSONResponse({"error": "q is required"}, status_code=400)
-        book = request.query_params.get("book", "")
-        try:
-            start = int(request.query_params.get("start", "0"))
-        except ValueError:
-            return JSONResponse({"error": "start must be an integer"}, status_code=400)
-        try:
-            sr = client.search(pattern=q, books=book, start=start)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-        return JSONResponse(_search_response_dict(sr))
-
-    async def get_article(request: Request) -> JSONResponse:
-        url = request.query_params.get("url", "")
-        if not url:
-            return JSONResponse({"error": "url is required"}, status_code=400)
-        try:
-            html = client.fetch_article(url)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-        return JSONResponse({"url": url, "content": strip_html(html)})
-
     # -- routing --------------------------------------------------------------
 
     routes: list = [
@@ -294,17 +234,8 @@ def build_app(
         Route("/docs", swagger_ui, methods=["GET"]),
         Route("/redoc", redoc_ui, methods=["GET"]),
         Route("/health", health, methods=["GET"]),
-        # Primary POST tool endpoints
-        Route("/kiwix_list_books", tool_list_books, methods=["POST"]),
         Route("/kiwix_search", tool_search, methods=["POST"]),
         Route("/kiwix_fetch_article", tool_fetch_article, methods=["POST"]),
-        # Legacy GET aliases
-        Route("/books", get_books, methods=["GET"]),
-        Route("/search", get_search, methods=["GET"]),
-        Route("/article", get_article, methods=["GET"]),
-        Route("/api/books", get_books, methods=["GET"]),
-        Route("/api/search", get_search, methods=["GET"]),
-        Route("/api/article", get_article, methods=["GET"]),
     ]
 
     if transport == "streamable-http":

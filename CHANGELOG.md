@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.7.0] (2026-05-31)
+
+### Breaking changes
+
+* Simplified to **two MCP tools** only — `kiwix_search` and `kiwix_fetch_article`.
+  `kiwix_list_books` has been removed. `kiwix_search` now automatically searches
+  all available books without requiring the caller to specify a book slug.
+
+### Features
+
+* `kiwix_search` response now includes `viewer_url` — a browser link
+  (`{kiwix_host}/viewer#{book}/{article}`) for users to open the article
+  directly in the Kiwix web viewer.
+* OpenAPI 3.1.0 spec updated to reflect the two-tool layout.
+
 ## [1.6.0] (2026-05-30)
 
 ### Breaking changes

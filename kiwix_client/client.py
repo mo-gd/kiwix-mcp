@@ -44,6 +44,11 @@ class KiwixClient:
         self._origin = f"{parsed.scheme}://{parsed.netloc}"
         self._client = httpx.Client(timeout=timeout)
 
+    @property
+    def viewer_base_url(self) -> str:
+        """Origin URL for constructing Kiwix viewer links (e.g. http://host:8888)."""
+        return self._origin
+
     def close(self) -> None:
         self._client.close()
 
