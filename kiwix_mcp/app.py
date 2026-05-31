@@ -64,24 +64,14 @@ _REDOC_HTML = """\
 # Path-rewriting middleware
 # ---------------------------------------------------------------------------
 
-# All REST paths served by this app. Used to decide which /mcp/* paths to
-# rewrite for clients that treat /mcp as their base URL (e.g. Open WebUI).
 _REST_PATHS = frozenset({
     "/openapi.json", "/docs", "/redoc", "/health",
-    "/kiwix_search", "/kiwix_fetch_article",
+    "/kiwix_search",
 })
 
 
 class _MCPPrefixMiddleware:
-    """Rewrite /mcp/<REST_PATH> → /<REST_PATH> before Starlette routing.
-
-    Open WebUI uses the configured server URL as the base for all calls.
-    When the user sets the server URL to http://host/mcp, Open WebUI calls
-    /mcp/kiwix_search, /mcp/kiwix_fetch_article, etc.  This middleware strips
-    /mcp for known REST paths so the root router can handle them directly.
-    Paths not in _REST_PATHS (e.g. /mcp itself for the MCP transport) are
-    passed through unchanged.
-    """
+    """Rewrite /mcp/<REST_PATH> → /<REST_PATH> before Starlette routing."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -90,7 +80,7 @@ class _MCPPrefixMiddleware:
         if scope["type"] == "http":
             path: str = scope["path"]
             if path.startswith("/mcp/"):
-                stripped = path[4:]  # "/mcp/kiwix_search" → "/kiwix_search"
+                stripped = path[4:]
                 if stripped.rstrip("/") in _REST_PATHS or stripped in _REST_PATHS:
                     scope = {**scope, "path": stripped}
         await self._app(scope, receive, send)
@@ -134,26 +124,21 @@ def build_app(
 ) -> Any:
     """Return a fully configured ASGI app.
 
-    Primary endpoints (POST, mcpo-style — what Open WebUI expects):
-      POST /kiwix_search        — full-text search across all books
-      POST /kiwix_fetch_article — fetch article as plain text
+    Single tool endpoint (POST, mcpo-style):
+      POST /kiwix_search  — search + fetch top 3 articles in one call
 
     Discovery / docs:
-      GET  /openapi.json        — OpenAPI 3.1.0 spec
-      GET  /docs                — Swagger UI
-      GET  /redoc               — ReDoc
-      GET  /health              — health check
-
-    All paths also reachable with /mcp/ prefix (Open WebUI base-URL behaviour).
+      GET  /openapi.json  — OpenAPI 3.1.0 spec
+      GET  /docs          — Swagger UI
+      GET  /redoc         — ReDoc
+      GET  /health        — health check
 
     MCP transport:
-      *  /mcp   — streamable-http (if selected)
-      *  /sse   — SSE (if selected)
+      /mcp  — streamable-http (if selected)
+      /sse  — SSE (if selected)
     """
 
     viewer_origin: str = getattr(client, "viewer_base_url", "")
-
-    # -- meta -----------------------------------------------------------------
 
     async def openapi_json(request: Request) -> JSONResponse:
         return JSONResponse(SPEC)
@@ -167,8 +152,6 @@ def build_app(
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
-    # -- POST tool endpoints (primary, mcpo-style) ----------------------------
-
     async def tool_search(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -181,7 +164,6 @@ def build_app(
         if not q:
             return JSONResponse({"error": "query is required"}, status_code=400)
 
-        # Search all books and aggregate results.
         try:
             books = client.list_books()
         except Exception:
@@ -193,7 +175,7 @@ def build_app(
             for book in books:
                 try:
                     sr = client.search(pattern=q, books=book.slug, start=0)
-                    all_results.extend(sr.results[:10])
+                    all_results.extend(sr.results[:3])
                 except Exception:
                     continue
         else:
@@ -205,38 +187,27 @@ def build_app(
             except Exception as exc:
                 return JSONResponse({"error": str(exc)}, status_code=502)
 
+        top = all_results[:3]
+        results_out = []
+        for r in top:
+            try:
+                html = client.fetch_article(r.url)
+                content = strip_html(html)
+            except Exception:
+                content = None
+            results_out.append({
+                "title": r.title,
+                "url": r.url,
+                "viewer_url": _viewer_url(viewer_origin, r.url),
+                "snippet": r.snippet or None,
+                "content": content,
+            })
+
         return JSONResponse({
             "query": q,
-            "total": len(all_results),
-            "results": [
-                {
-                    "title": r.title,
-                    "url": r.url,
-                    "viewer_url": _viewer_url(viewer_origin, r.url),
-                    "snippet": r.snippet or None,
-                }
-                for r in all_results
-            ],
+            "total": len(results_out),
+            "results": results_out,
         })
-
-    async def tool_fetch_article(request: Request) -> JSONResponse:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        if not isinstance(body, dict):
-            body = {}
-
-        url = body.get("url", "")
-        if not url:
-            return JSONResponse({"error": "url is required"}, status_code=400)
-        try:
-            html = client.fetch_article(url)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-        return JSONResponse({"url": url, "content": strip_html(html)})
-
-    # -- routing --------------------------------------------------------------
 
     routes: list = [
         Route("/openapi.json", openapi_json, methods=["GET"]),
@@ -244,7 +215,6 @@ def build_app(
         Route("/redoc", redoc_ui, methods=["GET"]),
         Route("/health", health, methods=["GET"]),
         Route("/kiwix_search", tool_search, methods=["POST"]),
-        Route("/kiwix_fetch_article", tool_fetch_article, methods=["POST"]),
     ]
 
     if transport == "streamable-http":

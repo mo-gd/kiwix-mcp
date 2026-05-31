@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0] (2026-05-31)
+
+### Breaking changes
+
+* Reduced to **one MCP tool**: `kiwix_search`.
+  `kiwix_fetch_article` removed — `kiwix_search` now automatically fetches
+  the full content of the top 3 results and returns everything in a single call.
+
+### Features
+
+* Each search result now includes `content` (full plain text of the article).
+* No follow-up tool calls needed — the AI gets titles, URLs, viewer links,
+  and full article text in one response.
+
 ## [1.7.0] (2026-05-31)
 
 ### Breaking changes

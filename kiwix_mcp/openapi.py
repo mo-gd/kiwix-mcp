@@ -1,4 +1,4 @@
-"""OpenAPI 3.1.0 specification — two tools: kiwix_search, kiwix_fetch_article."""
+"""OpenAPI 3.1.0 specification — one tool: kiwix_search."""
 from __future__ import annotations
 
 from typing import Any
@@ -8,11 +8,11 @@ SPEC: dict[str, Any] = {
     "servers": [{"url": "/", "description": "Kiwix MCP server"}],
     "info": {
         "title": "Kiwix MCP",
-        "version": "1.7.0",
+        "version": "1.8.0",
         "description": (
-            "Two-tool OpenAPI server for Kiwix ZIM libraries.\n\n"
-            "1. **kiwix_search** — search across all books, get URLs\n"
-            "2. **kiwix_fetch_article** — fetch full article content\n\n"
+            "Single-tool OpenAPI server for Kiwix ZIM libraries.\n\n"
+            "**kiwix_search** — search across all books and return the full content "
+            "of the top 3 matching articles in one call.\n\n"
             "MCP transport: `/mcp` (streamable-http)"
         ),
         "contact": {"url": "https://github.com/mo-gd/kiwix-mcp"},
@@ -22,11 +22,11 @@ SPEC: dict[str, Any] = {
         "/kiwix_search": {
             "post": {
                 "operationId": "kiwix_search",
-                "summary": "Search all Kiwix books",
+                "summary": "Search all Kiwix books and return full article content",
                 "description": (
                     "Search for articles across all available ZIM books. "
-                    "Returns titles, URLs, and short excerpts. "
-                    "Use the URL with kiwix_fetch_article to read the full article."
+                    "Returns the top 3 results with their full plain-text content, "
+                    "article URLs, and viewer links for the user. No follow-up calls needed."
                 ),
                 "tags": ["kiwix"],
                 "requestBody": {
@@ -34,13 +34,13 @@ SPEC: dict[str, Any] = {
                     "content": {
                         "application/json": {
                             "schema": {"$ref": "#/components/schemas/SearchInput"},
-                            "example": {"query": "how to create an organization"},
+                            "example": {"query": "how to create an npm organization"},
                         }
                     },
                 },
                 "responses": {
                     "200": {
-                        "description": "Search results",
+                        "description": "Top 3 results with full article content",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/SearchResponse"}
@@ -49,52 +49,6 @@ SPEC: dict[str, Any] = {
                     },
                     "400": {
                         "description": "Missing query",
-                        "content": {
-                            "application/json": {
-                                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
-                            }
-                        },
-                    },
-                    "502": {
-                        "description": "Kiwix server unreachable",
-                        "content": {
-                            "application/json": {
-                                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
-                            }
-                        },
-                    },
-                },
-            }
-        },
-        "/kiwix_fetch_article": {
-            "post": {
-                "operationId": "kiwix_fetch_article",
-                "summary": "Fetch a full article as plain text",
-                "description": (
-                    "Retrieve the complete content of a Kiwix article, stripped of HTML. "
-                    "Use a URL returned by kiwix_search."
-                ),
-                "tags": ["kiwix"],
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": {"$ref": "#/components/schemas/FetchInput"},
-                            "example": {"url": "/devdocs_en_npm_2026-05/A/cli/npm-org.html"},
-                        }
-                    },
-                },
-                "responses": {
-                    "200": {
-                        "description": "Article content as plain text",
-                        "content": {
-                            "application/json": {
-                                "schema": {"$ref": "#/components/schemas/ArticleResponse"}
-                            }
-                        },
-                    },
-                    "400": {
-                        "description": "Missing url",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/ErrorResponse"}
@@ -139,18 +93,7 @@ SPEC: dict[str, Any] = {
                     "query": {
                         "type": "string",
                         "description": "What to search for",
-                        "example": "how to create an organization",
-                    }
-                },
-            },
-            "FetchInput": {
-                "type": "object",
-                "required": ["url"],
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Article URL from kiwix_search",
-                        "example": "/devdocs_en_npm_2026-05/A/cli/npm-org.html",
+                        "example": "how to create an npm organization",
                     }
                 },
             },
@@ -161,13 +104,17 @@ SPEC: dict[str, Any] = {
                     "title": {"type": "string"},
                     "url": {
                         "type": "string",
-                        "description": "Pass to kiwix_fetch_article to read the full article",
+                        "description": "Internal article URL",
                     },
                     "viewer_url": {
                         "type": ["string", "null"],
                         "description": "Browser link for the user to open the article in Kiwix viewer",
                     },
                     "snippet": {"type": ["string", "null"]},
+                    "content": {
+                        "type": ["string", "null"],
+                        "description": "Full article as plain text",
+                    },
                 },
             },
             "SearchResponse": {
@@ -179,17 +126,6 @@ SPEC: dict[str, Any] = {
                     "results": {
                         "type": "array",
                         "items": {"$ref": "#/components/schemas/SearchResult"},
-                    },
-                },
-            },
-            "ArticleResponse": {
-                "type": "object",
-                "required": ["url", "content"],
-                "properties": {
-                    "url": {"type": "string"},
-                    "content": {
-                        "type": "string",
-                        "description": "Full article as plain text",
                     },
                 },
             },

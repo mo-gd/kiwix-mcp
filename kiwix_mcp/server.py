@@ -1,4 +1,4 @@
-"""MCP server — two tools only: kiwix_search and kiwix_fetch_article."""
+"""MCP server — one tool: kiwix_search (search + fetch top 3 results)."""
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
@@ -8,15 +8,11 @@ from kiwix_client.parse import SearchResult
 
 
 _SEARCH_DESCRIPTION = (
-    "Search for articles across all Kiwix books. "
-    "Returns titles, article URLs (pass to kiwix_fetch_article), "
-    "and viewer_url links for users to open articles in their browser."
+    "Search Kiwix books and return the full content of the top 3 matching articles. "
+    "No follow-up calls needed — titles, URLs, viewer links, and article text are all included."
 )
 
-_FETCH_DESCRIPTION = (
-    "Fetch the full content of a Kiwix article as plain text. "
-    "Use a URL returned by kiwix_search."
-)
+_TOP_N = 3
 
 
 def _article_viewer_url(origin: str, article_url: str) -> str:
@@ -47,13 +43,13 @@ def create_server(
     port: int = 8000,
     **_ignored,
 ) -> FastMCP:
-    """Build the MCP server with exactly two tools."""
+    """Build the MCP server with a single search+fetch tool."""
     mcp = FastMCP("kiwix-mcp", host=host, port=port)
     viewer_origin: str = getattr(client, "viewer_base_url", "")
 
     @mcp.tool(description=_SEARCH_DESCRIPTION)
     def kiwix_search(query: str) -> str:
-        """Search all Kiwix books for articles matching the query.
+        """Search all Kiwix books and return full content of the top 3 articles.
 
         Args:
             query: What to search for.
@@ -73,11 +69,10 @@ def create_server(
             for book in books:
                 try:
                     sr = client.search(pattern=query, books=book.slug, start=0)
-                    results.extend(sr.results[:10])
+                    results.extend(sr.results[:_TOP_N])
                 except Exception:
                     continue
         else:
-            # Single-book server or catalog unavailable — search without scope.
             try:
                 sr = client.search(pattern=query, books="", start=0)
                 results.extend(sr.results)
@@ -87,29 +82,25 @@ def create_server(
         if not results:
             return f'No results for "{query}".'
 
-        lines = [f'{len(results)} result(s) for "{query}":\n']
-        for i, r in enumerate(results, 1):
+        top = results[:_TOP_N]
+        lines = [f'{len(top)} result(s) for "{query}":\n']
+
+        for i, r in enumerate(top, 1):
+            vurl = _article_viewer_url(viewer_origin, r.url)
+            lines.append(f"{'─' * 60}")
             lines.append(f"{i}. {r.title}")
             lines.append(f"   URL: {r.url}")
-            vurl = _article_viewer_url(viewer_origin, r.url)
             if vurl:
                 lines.append(f"   Viewer: {vurl}")
-            if r.snippet:
-                snip = r.snippet[:200] + "…" if len(r.snippet) > 200 else r.snippet
-                lines.append(f"   {snip}")
             lines.append("")
+            try:
+                html = client.fetch_article(r.url)
+                content = strip_html(html)
+            except Exception as exc:
+                content = f"[Could not fetch article: {exc}]"
+            lines.append(content)
+            lines.append("")
+
         return "\n".join(lines)
-
-    @mcp.tool(description=_FETCH_DESCRIPTION)
-    def kiwix_fetch_article(url: str) -> str:
-        """Fetch a Kiwix article as plain text.
-
-        Args:
-            url: Relative article URL from kiwix_search (e.g. '/book/A/Page.html').
-        """
-        if not url:
-            raise ValueError("url is required")
-        html = client.fetch_article(url)
-        return strip_html(html)
 
     return mcp
