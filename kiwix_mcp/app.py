@@ -101,16 +101,25 @@ class _MCPPrefixMiddleware:
 # ---------------------------------------------------------------------------
 
 def _viewer_url(origin: str, article_url: str) -> Optional[str]:
-    """Convert /book/A/path.html → {origin}/viewer#book/path (for human browsers)."""
+    """Convert a Kiwix article URL to a browser viewer URL.
+
+    Handles both URL formats returned by kiwix-serve:
+      /content/{book}/{path}   → {origin}/viewer#{book}/{path}
+      /{book}/A/{path}.html    → {origin}/viewer#{book}/{path}
+    """
     if not origin:
         return None
     path = article_url.lstrip("/")
-    if "/A/" not in path:
+    if path.startswith("content/"):
+        fragment = path[len("content/"):]
+    elif "/A/" in path:
+        book, rest = path.split("/A/", 1)
+        if rest.endswith(".html"):
+            rest = rest[:-5]
+        fragment = f"{book}/{rest}"
+    else:
         return None
-    book, rest = path.split("/A/", 1)
-    if rest.endswith(".html"):
-        rest = rest[:-5]
-    return f"{origin}/viewer#{book}/{rest}"
+    return f"{origin}/viewer#{fragment}"
 
 
 # ---------------------------------------------------------------------------
