@@ -45,18 +45,16 @@ class MockKiwixClient:
 
 
 # ---------------------------------------------------------------------------
-# Helpers to invoke MCP tools via FastMCP
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _run_tool_sync(tool, kwargs: dict) -> str:
-    """Run a FastMCP tool synchronously and return text output."""
     import asyncio
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(tool.run(kwargs))
+        return loop.run_until_complete(tool.run(kwargs))
     finally:
         loop.close()
-    return result
 
 
 def _make_server(**kwargs):
@@ -94,21 +92,19 @@ class TestViewerUrl:
         assert url == "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/npm-org"
 
     def test_no_known_segment_returns_empty(self):
-        assert _article_viewer_url("http://host:8888", "/some/path/no-a-segment") == ""
+        assert _article_viewer_url("http://host:8888", "/some/path") == ""
 
     def test_empty_origin_returns_empty(self):
         assert _article_viewer_url("", "/content/book/page") == ""
 
 
 # ---------------------------------------------------------------------------
-# kiwix_search tool
+# kiwix_search — single tool
 # ---------------------------------------------------------------------------
 
 _SAMPLE_BOOKS = [
     Book(slug="devdocs_en_npm_2026-05", title="npm", name="devdocs_en_npm",
          summary="", category="devdocs", article_count=300),
-    Book(slug="devdocs_en_rust_2026-05", title="Rust", name="devdocs_en_rust",
-         summary="", category="devdocs", article_count=4000),
 ]
 
 _SAMPLE_SEARCH = SearchResponse(
@@ -127,12 +123,15 @@ _SAMPLE_SEARCH = SearchResponse(
     ],
 )
 
+_ARTICLE_HTML = "<html><body><h1>npm-org</h1><p>Manage &amp; create orgs.</p></body></html>"
+
 
 class TestKiwixSearch:
-    def test_returns_results_from_all_books(self):
+    def test_returns_title_and_url(self):
         mcp = create_server(MockKiwixClient(
             books=_SAMPLE_BOOKS,
             search_response=_SAMPLE_SEARCH,
+            article=_ARTICLE_HTML,
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
         assert "npm-org" in out
@@ -142,55 +141,51 @@ class TestKiwixSearch:
         mcp = create_server(MockKiwixClient(
             books=_SAMPLE_BOOKS,
             search_response=_SAMPLE_SEARCH,
+            article=_ARTICLE_HTML,
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
         assert "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/v10/commands/npm-org" in out
+
+    def test_includes_full_article_content(self):
+        mcp = create_server(MockKiwixClient(
+            books=_SAMPLE_BOOKS,
+            search_response=_SAMPLE_SEARCH,
+            article=_ARTICLE_HTML,
+        ))
+        out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
+        assert "Manage & create orgs." in out
+        assert "<" not in out
 
     def test_no_results_message(self):
         mcp = create_server(MockKiwixClient(
             books=_SAMPLE_BOOKS,
             search_response=SearchResponse(query="xyzzy", total=0, page_length=25),
+            article="",
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "xyzzy"})
         assert 'No results for "xyzzy"' in out
 
-    def test_falls_back_to_scopeless_search_when_no_books(self):
-        mcp = create_server(MockKiwixClient(
-            books=[],
+    def test_fetch_error_shows_message_not_crash(self):
+        """A failed article fetch should show an error inline, not crash the tool."""
+        class FailFetchClient(MockKiwixClient):
+            def fetch_article(self, relative_url):
+                raise ConnectionError("down")
+
+        mcp = create_server(FailFetchClient(
+            books=_SAMPLE_BOOKS,
             search_response=_SAMPLE_SEARCH,
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
-        assert "npm-org" in out
+        assert "Could not fetch article" in out
 
     def test_search_failure_returns_error_message(self):
         mcp = create_server(MockKiwixClient(error=ConnectionError("down")))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "test"})
         assert "Search failed" in out or "failed" in out.lower()
 
-    def test_snippet_truncated_at_200_chars(self):
-        sr = SearchResponse(
-            query="q", total=1, start_index=0, page_length=25,
-            results=[SearchResult(title="T", book="b", url="/b/A/p", snippet="x" * 400)],
-        )
-        mcp = create_server(MockKiwixClient(books=[], search_response=sr))
-        out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "q"})
-        assert "…" in out
-
-
-# ---------------------------------------------------------------------------
-# kiwix_fetch_article tool
-# ---------------------------------------------------------------------------
-
-class TestKiwixFetchArticle:
-    def test_returns_plain_text(self):
-        html = "<html><body><h1>npm-org</h1><p>Manage &amp; create orgs.</p></body></html>"
-        mcp = create_server(MockKiwixClient(article=html))
-        out = _run_tool_sync(_tool(mcp, "kiwix_fetch_article"), {"url": "/b/A/npm-org.html"})
-        assert "npm-org" in out
-        assert "Manage & create orgs." in out
-        assert "<" not in out
-
-    def test_upstream_error_propagates(self):
-        mcp = create_server(MockKiwixClient(error=ConnectionError("down")))
-        with pytest.raises(Exception):
-            _run_tool_sync(_tool(mcp, "kiwix_fetch_article"), {"url": "/b/A/X.html"})
+    def test_only_one_tool_registered(self):
+        import asyncio
+        mcp = create_server(MockKiwixClient())
+        tools = asyncio.run(mcp.list_tools())
+        assert len(tools) == 1
+        assert tools[0].name == "kiwix_search"
