@@ -92,9 +92,14 @@ SPEC: dict[str, Any] = {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "What to search for",
-                        "example": "how to create an npm organization",
-                    }
+                        "description": "What to search for (English keywords)",
+                        "example": "npm organization create",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Short name from racords.env to restrict search to one book (e.g. 'npm', 'linux'). Omit to search all books.",
+                        "example": "npm",
+                    },
                 },
             },
             "SearchResult": {
