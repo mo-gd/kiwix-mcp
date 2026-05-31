@@ -72,25 +72,32 @@ def _tool(mcp, name: str):
 # ---------------------------------------------------------------------------
 
 class TestViewerUrl:
-    def test_standard_url(self):
+    def test_content_format(self):
+        url = _article_viewer_url(
+            "http://127.0.0.1:18888",
+            "/content/devdocs_en_npm_2026-05/creating-an-organization",
+        )
+        assert url == "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/creating-an-organization"
+
+    def test_content_format_nested(self):
+        url = _article_viewer_url(
+            "http://127.0.0.1:18888",
+            "/content/devdocs_en_npm_2026-05/cli/v10/commands/npm-org",
+        )
+        assert url == "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/v10/commands/npm-org"
+
+    def test_legacy_A_format(self):
         url = _article_viewer_url(
             "http://127.0.0.1:18888",
             "/devdocs_en_npm_2026-05/A/cli/npm-org.html",
         )
         assert url == "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/npm-org"
 
-    def test_nested_path(self):
-        url = _article_viewer_url(
-            "http://127.0.0.1:18888",
-            "/devdocs_en_npm_2026-05/A/cli/v10/configuring-npm/package-json.html",
-        )
-        assert url == "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/v10/configuring-npm/package-json"
-
-    def test_no_A_segment_returns_empty(self):
+    def test_no_known_segment_returns_empty(self):
         assert _article_viewer_url("http://host:8888", "/some/path/no-a-segment") == ""
 
     def test_empty_origin_returns_empty(self):
-        assert _article_viewer_url("", "/book/A/page.html") == ""
+        assert _article_viewer_url("", "/content/book/page") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +120,7 @@ _SAMPLE_SEARCH = SearchResponse(
         SearchResult(
             title="npm-org",
             book="devdocs_en_npm_2026-05",
-            url="/devdocs_en_npm_2026-05/A/cli/npm-org.html",
+            url="/content/devdocs_en_npm_2026-05/cli/v10/commands/npm-org",
             snippet="Manage orgs.",
             word_count=120,
         )
@@ -129,7 +136,7 @@ class TestKiwixSearch:
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
         assert "npm-org" in out
-        assert "/devdocs_en_npm_2026-05/A/cli/npm-org.html" in out
+        assert "/content/devdocs_en_npm_2026-05/cli/v10/commands/npm-org" in out
 
     def test_includes_viewer_url(self):
         mcp = create_server(MockKiwixClient(
@@ -137,7 +144,7 @@ class TestKiwixSearch:
             search_response=_SAMPLE_SEARCH,
         ))
         out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization"})
-        assert "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/npm-org" in out
+        assert "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/v10/commands/npm-org" in out
 
     def test_no_results_message(self):
         mcp = create_server(MockKiwixClient(

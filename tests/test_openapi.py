@@ -69,7 +69,7 @@ _SAMPLE_SEARCH = SearchResponse(
         SearchResult(
             title="npm-org",
             book="devdocs_en_npm_2026-05",
-            url="/devdocs_en_npm_2026-05/A/cli/npm-org.html",
+            url="/content/devdocs_en_npm_2026-05/cli/v10/commands/npm-org",
             snippet="Manage orgs.",
             word_count=120,
         )
@@ -173,7 +173,7 @@ class TestToolSearch:
         assert len(data["results"]) >= 1
         r = data["results"][0]
         assert r["title"] == "npm-org"
-        assert r["url"] == "/devdocs_en_npm_2026-05/A/cli/npm-org.html"
+        assert r["url"] == "/content/devdocs_en_npm_2026-05/cli/v10/commands/npm-org"
 
     def test_search_result_includes_viewer_url(self):
         c = _make_client(books=_SAMPLE_BOOKS, search_response=_SAMPLE_SEARCH)
@@ -181,7 +181,7 @@ class TestToolSearch:
         assert resp.status_code == 200
         r = resp.json()["results"][0]
         assert r["viewer_url"] == (
-            "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/npm-org"
+            "http://127.0.0.1:18888/viewer#devdocs_en_npm_2026-05/cli/v10/commands/npm-org"
         )
 
     def test_empty_query_returns_400(self):
