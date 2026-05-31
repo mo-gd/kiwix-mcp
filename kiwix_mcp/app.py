@@ -121,6 +121,7 @@ def build_app(
     mcp: FastMCP,
     transport: str,
     cors_origins: str,
+    records: dict | None = None,
 ) -> Any:
     """Return a fully configured ASGI app.
 
@@ -139,6 +140,7 @@ def build_app(
     """
 
     viewer_origin: str = getattr(client, "viewer_base_url", "")
+    _records: dict = records or {}
 
     async def openapi_json(request: Request) -> JSONResponse:
         return JSONResponse(SPEC)
@@ -164,28 +166,48 @@ def build_app(
         if not q:
             return JSONResponse({"error": "query is required"}, status_code=400)
 
-        try:
-            books = client.list_books()
-        except Exception:
-            books = []
+        category = body.get("category", "")
+        book_slug = ""
+        if category:
+            if category not in _records:
+                available = ", ".join(sorted(_records)) or "none configured"
+                return JSONResponse(
+                    {"error": f'Unknown category "{category}". Available: {available}.'},
+                    status_code=400,
+                )
+            book_slug = _records[category]
 
         all_results: list = []
 
-        if books:
-            for book in books:
-                try:
-                    sr = client.search(pattern=q, books=book.slug, start=0)
-                    all_results.extend(sr.results[:3])
-                except Exception:
-                    continue
-        else:
+        if book_slug:
             try:
-                sr = client.search(pattern=q, books="", start=0)
+                sr = client.search(pattern=q, books=book_slug, start=0)
                 all_results.extend(sr.results)
             except ValueError as exc:
                 return JSONResponse({"error": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"error": str(exc)}, status_code=502)
+        else:
+            try:
+                books = client.list_books()
+            except Exception:
+                books = []
+
+            if books:
+                for book in books:
+                    try:
+                        sr = client.search(pattern=q, books=book.slug, start=0)
+                        all_results.extend(sr.results[:3])
+                    except Exception:
+                        continue
+            else:
+                try:
+                    sr = client.search(pattern=q, books="", start=0)
+                    all_results.extend(sr.results)
+                except ValueError as exc:
+                    return JSONResponse({"error": str(exc)}, status_code=400)
+                except Exception as exc:
+                    return JSONResponse({"error": str(exc)}, status_code=502)
 
         top = all_results[:3]
         results_out = []

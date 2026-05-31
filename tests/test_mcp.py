@@ -189,3 +189,75 @@ class TestKiwixSearch:
         tools = asyncio.run(mcp.list_tools())
         assert len(tools) == 1
         assert tools[0].name == "kiwix_search"
+
+
+# ---------------------------------------------------------------------------
+# category parameter
+# ---------------------------------------------------------------------------
+
+class TestCategory:
+    def test_known_category_restricts_search(self):
+        """category="npm" should search with the mapped slug, not all books."""
+        records = {"npm": "devdocs_en_npm_2026-05", "linux": "devdocs_en_man_2026-04"}
+        mock = MockKiwixClient(
+            books=_SAMPLE_BOOKS,
+            search_response=_SAMPLE_SEARCH,
+            article=_ARTICLE_HTML,
+        )
+        received_slugs = []
+        original = mock.search
+        def capturing(pattern, books="", start=0):
+            received_slugs.append(books)
+            return original(pattern=pattern, books=books, start=start)
+        mock.search = capturing
+
+        mcp = create_server(mock, records=records)
+        _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "organization", "category": "npm"})
+        assert received_slugs == ["devdocs_en_npm_2026-05"]
+
+    def test_unknown_category_returns_error(self):
+        records = {"npm": "devdocs_en_npm_2026-05"}
+        mcp = create_server(MockKiwixClient(), records=records)
+        out = _run_tool_sync(_tool(mcp, "kiwix_search"), {"query": "test", "category": "python"})
+        assert "Unknown category" in out
+        assert "npm" in out
+
+    def test_description_lists_categories(self):
+        import asyncio
+        records = {"npm": "devdocs_en_npm_2026-05", "linux": "devdocs_en_man_2026-04"}
+        mcp = create_server(MockKiwixClient(), records=records)
+        tools = asyncio.run(mcp.list_tools())
+        desc = tools[0].description or ""
+        assert "npm" in desc
+        assert "linux" in desc
+
+
+# ---------------------------------------------------------------------------
+# parse_records
+# ---------------------------------------------------------------------------
+
+class TestParseRecords:
+    def test_parses_correctly(self, tmp_path):
+        from kiwix_mcp.__main__ import parse_records
+        (tmp_path / "racords.env").write_text(
+            "devdocs_en_npm_2026-05.zim = npm\n"
+            "devdocs_en_man_2026-04.zim = linux\n"
+        )
+        result = parse_records(str(tmp_path))
+        assert result == {
+            "npm": "devdocs_en_npm_2026-05",
+            "linux": "devdocs_en_man_2026-04",
+        }
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        from kiwix_mcp.__main__ import parse_records
+        assert parse_records(str(tmp_path)) == {}
+
+    def test_ignores_comments_and_blank_lines(self, tmp_path):
+        from kiwix_mcp.__main__ import parse_records
+        (tmp_path / "racords.env").write_text(
+            "# this is a comment\n"
+            "\n"
+            "devdocs_en_npm_2026-05.zim = npm\n"
+        )
+        assert parse_records(str(tmp_path)) == {"npm": "devdocs_en_npm_2026-05"}
